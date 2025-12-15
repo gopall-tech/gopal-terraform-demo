@@ -5,12 +5,21 @@ terraform {
       version = "~> 3.0"
     }
   }
+
+  # --- CRITICAL: Backend Configuration for State Storage ---
+  backend "azurerm" {
+    resource_group_name  = "tfstate-rg"
+    storage_account_name = "gopalstate123"  # Matches the storage account you created
+    container_name       = "tfstate"
+    key                  = "prod.terraform.tfstate"
+  }
 }
 
 provider "azurerm" {
   features {}
 }
 
+# --- Resource Group ---
 resource "azurerm_resource_group" "rg" {
   name     = "${var.prefix}-resources-rg"
   location = var.location
