@@ -1,0 +1,54 @@
+name: Build and Deploy API to AKS
+
+on:
+  push:
+    branches: [ "main" ]
+    paths: [ "api/**" ]
+
+env:
+  ACR_NAME: mycompanyacr
+  IMAGE_NAME: my-api-service
+  AKS_CLUSTER_NAME: my-backend-aks
+  AKS_RESOURCE_GROUP: my-app-architecture-rg
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Login to ACR
+      run: az acr login --name ${{ env.ACR_NAME }}
+
+    - name: Build and Push Docker Image
+      run: |
+        docker build ./api -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+        docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+
+  deploy-to-aks:
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Set AKS Context
+      uses: azure/aks-set-context@v3
+      with:
+        resource-group: ${{ env.AKS_RESOURCE_GROUP }}
+        cluster-name: ${{ env.AKS_CLUSTER_NAME }}
+
+    # Replaces the image tag in your k8s manifest with the new SHA and applies it
+    - name: Deploy to Kubernetes
+      run: |
+        sed -i "s|IMAGE_PLACEHOLDER|${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}|g" k8s/deployment.yaml
+        kubectl apply -f k8s/deployment.yaml
