@@ -14,12 +14,13 @@ spec:
     spec:
       containers:
       - name: my-api-container
-        image: IMAGE_PLACEHOLDER  # This is replaced by the GitHub Action
+        image: IMAGE_PLACEHOLDER
         ports:
         - containerPort: 80
         env:
         - name: DB_CONNECTION_STRING
-          value: "Server=tcp:my-sql-server-unique-001.database.windows.net,1433;Initial Catalog=my-app-db;User ID=adminuser;Password=ComplexPassword123!;"
+          # Updated server name and DB name
+          value: "Server=tcp:gopal-sql-server.database.windows.net,1433;Initial Catalog=Gopal-db;User ID=adminuser;Password=ComplexPassword123!;"
 ---
 apiVersion: v1
 kind: Service

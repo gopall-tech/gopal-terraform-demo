@@ -6,10 +6,10 @@ on:
     paths: [ "api/**" ]
 
 env:
-  ACR_NAME: mycompanyacr
+  ACR_NAME: gopalacr                  # Updated: lowercase, no hyphens
   IMAGE_NAME: my-api-service
-  AKS_CLUSTER_NAME: my-backend-aks
-  AKS_RESOURCE_GROUP: my-app-architecture-rg
+  AKS_CLUSTER_NAME: Gopal-aks         # Updated: Matches main.tf
+  AKS_RESOURCE_GROUP: Gopal-resources-rg # Updated: Matches main.tf
 
 jobs:
   build-and-push:
@@ -26,8 +26,9 @@ jobs:
       run: az acr login --name ${{ env.ACR_NAME }}
 
     - name: Build and Push Docker Image
+      working-directory: ./api        # Ensure build happens inside api folder
       run: |
-        docker build ./api -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+        docker build . -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
         docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
   deploy-to-aks:
@@ -47,7 +48,6 @@ jobs:
         resource-group: ${{ env.AKS_RESOURCE_GROUP }}
         cluster-name: ${{ env.AKS_CLUSTER_NAME }}
 
-    # Replaces the image tag in your k8s manifest with the new SHA and applies it
     - name: Deploy to Kubernetes
       run: |
         sed -i "s|IMAGE_PLACEHOLDER|${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}|g" k8s/deployment.yaml
