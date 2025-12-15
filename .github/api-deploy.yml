@@ -6,10 +6,10 @@ on:
     paths: [ "api/**" ]
 
 env:
-  ACR_NAME: gopalacr                  # Updated: lowercase, no hyphens
+  ACR_NAME: gopaldevacr               # Matches new Terraform name
   IMAGE_NAME: my-api-service
-  AKS_CLUSTER_NAME: Gopal-aks         # Updated: Matches main.tf
-  AKS_RESOURCE_GROUP: Gopal-resources-rg # Updated: Matches main.tf
+  AKS_CLUSTER_NAME: GopalDev-aks      # Matches new Terraform name
+  AKS_RESOURCE_GROUP: GopalDev-resources-rg # Matches new Terraform name
 
 jobs:
   build-and-push:
@@ -26,7 +26,7 @@ jobs:
       run: az acr login --name ${{ env.ACR_NAME }}
 
     - name: Build and Push Docker Image
-      working-directory: ./api        # Ensure build happens inside api folder
+      working-directory: ./api
       run: |
         docker build . -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
         docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}

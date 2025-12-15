@@ -9,7 +9,7 @@ terraform {
   # --- CRITICAL: Backend Configuration for State Storage ---
   backend "azurerm" {
     resource_group_name  = "tfstate-rg"
-    storage_account_name = "gopalstate123"  # Matches the storage account you created
+    storage_account_name = "gopalstate123"  # Matches your storage account
     container_name       = "tfstate"
     key                  = "prod.terraform.tfstate"
   }
@@ -35,7 +35,7 @@ resource "azurerm_service_plan" "ui_plan" {
 }
 
 resource "azurerm_linux_web_app" "ui_app" {
-  # Result: Gopal-frontend-ui
+  # Result: GopalDev-frontend-ui
   name                = "${var.prefix}-frontend-ui"
   resource_group_name = azurerm_resource_group.rg.name
   location            = azurerm_resource_group.rg.location
@@ -50,7 +50,7 @@ resource "azurerm_linux_web_app" "ui_app" {
 
 # --- 2. Gateway: API Management (APIM) ---
 resource "azurerm_api_management" "apim" {
-  # Result: Gopal-apim
+  # Result: GopalDev-apim
   name                = "${var.prefix}-apim"
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
@@ -61,8 +61,7 @@ resource "azurerm_api_management" "apim" {
 
 # --- 3. Backend: AKS (API) + ACR ---
 resource "azurerm_container_registry" "acr" {
-  # ACR does not allow hyphens. This removes them.
-  # Result: gopalacr
+  # ACR does not allow hyphens. Result: gopaldevacr
   name                = lower(replace("${var.prefix}acr", "-", ""))
   resource_group_name = azurerm_resource_group.rg.name
   location            = azurerm_resource_group.rg.location
@@ -71,7 +70,7 @@ resource "azurerm_container_registry" "acr" {
 }
 
 resource "azurerm_kubernetes_cluster" "aks" {
-  # Result: Gopal-aks
+  # Result: GopalDev-aks
   name                = "${var.prefix}-aks"
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
@@ -88,15 +87,11 @@ resource "azurerm_kubernetes_cluster" "aks" {
   }
 }
 
-resource "azurerm_role_assignment" "aks_acr_pull" {
-  scope                = azurerm_container_registry.acr.id
-  role_definition_name = "AcrPull"
-  principal_id         = azurerm_kubernetes_cluster.aks.kubelet_identity[0].object_id
-}
+# NOTE: Role assignment removed to avoid permission errors.
 
 # --- 4. Database: Azure SQL ---
 resource "azurerm_mssql_server" "sql_server" {
-  # Result: Gopal-sql-server
+  # Result: GopalDev-sql-server
   name                         = lower("${var.prefix}-sql-server")
   resource_group_name          = azurerm_resource_group.rg.name
   location                     = azurerm_resource_group.rg.location

@@ -1,13 +1,13 @@
 variable "prefix" {
-  description = " The prefix used for all resources in this example"
+  description = "The prefix used for all resources in this example"
   type        = string
-  default     = "Gopal"
+  default     = "GopalDev"
 }
 
 variable "location" {
   description = "The Azure Region in which all resources in this example should be created."
   type        = string
-  default     = "East US"
+  default     = "East US 2"
 }
 
 variable "sql_admin_username" {
