@@ -6,11 +6,11 @@ terraform {
     }
   }
 
+  # Backend empty for dynamic injection (dev, qa, prod)
   backend "azurerm" {
     resource_group_name  = "tfstate-rg"
     storage_account_name = "gopalstate123"
     container_name       = "tfstate"
-    key                  = "dev.terraform.tfstate" # Changed to 'dev' state file
   }
 }
 
@@ -48,6 +48,9 @@ resource "azurerm_kubernetes_cluster" "aks" {
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
   dns_prefix          = "${lower(var.prefix)}${var.environment}aks"
+  
+  # FIX: Define a clean name for the infrastructure group
+  node_resource_group = "${var.prefix}-${var.environment}-nodes-rg"
 
   default_node_pool {
     name       = "default"
@@ -60,7 +63,7 @@ resource "azurerm_kubernetes_cluster" "aks" {
   }
 }
 
-# --- 3. Database: PostgreSQL (Replaces MSSQL) ---
+# --- 3. Database: PostgreSQL ---
 resource "azurerm_postgresql_flexible_server" "postgres" {
   name                   = lower("${var.prefix}-${var.environment}-psql")
   resource_group_name    = azurerm_resource_group.rg.name
@@ -69,7 +72,7 @@ resource "azurerm_postgresql_flexible_server" "postgres" {
   administrator_login    = var.sql_admin_username
   administrator_password = var.sql_admin_password
   storage_mb             = 32768
-  sku_name               = "B_Standard_B1ms" # Burstable 1 vCore (Cheapest)
+  sku_name               = "B_Standard_B1ms"
 }
 
 resource "azurerm_postgresql_flexible_server_database" "db" {
@@ -79,7 +82,6 @@ resource "azurerm_postgresql_flexible_server_database" "db" {
   charset   = "utf8"
 }
 
-# Allow All Azure Services (Simplifies access for AKS)
 resource "azurerm_postgresql_flexible_server_firewall_rule" "allow_azure" {
   name             = "allow-azure-services"
   server_id        = azurerm_postgresql_flexible_server.postgres.id
