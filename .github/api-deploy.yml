@@ -6,10 +6,10 @@ on:
     paths: [ "api/**" ]
 
 env:
-  ACR_NAME: gopaldevacr
+  ACR_NAME: gopalfinalacr               # Updated
   IMAGE_NAME: my-api-service
-  AKS_CLUSTER_NAME: GopalDev-aks
-  AKS_RESOURCE_GROUP: GopalDev-resources-rg
+  AKS_CLUSTER_NAME: GopalFinal-aks      # Updated
+  AKS_RESOURCE_GROUP: GopalFinal-resources-rg # Updated
 
 jobs:
   build-and-push:

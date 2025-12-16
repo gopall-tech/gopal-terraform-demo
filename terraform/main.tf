@@ -8,7 +8,7 @@ terraform {
 
   backend "azurerm" {
     resource_group_name  = "tfstate-rg"
-    storage_account_name = "gopalstate123"  # Matches your storage account
+    storage_account_name = "gopalstate123"
     container_name       = "tfstate"
     key                  = "prod.terraform.tfstate"
   }
@@ -18,7 +18,6 @@ provider "azurerm" {
   features {}
 }
 
-# --- Resource Group ---
 resource "azurerm_resource_group" "rg" {
   name     = "${var.prefix}-resources-rg"
   location = var.location
@@ -30,8 +29,7 @@ resource "azurerm_service_plan" "ui_plan" {
   resource_group_name = azurerm_resource_group.rg.name
   location            = azurerm_resource_group.rg.location
   os_type             = "Linux"
-  # DOWNGRADED: P1v2 (Premium) -> B1 (Basic) to fit quota
-  sku_name            = "B1" 
+  sku_name            = "B1"
 }
 
 resource "azurerm_linux_web_app" "ui_app" {
@@ -54,9 +52,9 @@ resource "azurerm_api_management" "apim" {
   resource_group_name = azurerm_resource_group.rg.name
   publisher_name      = "${var.prefix} Company"
   publisher_email     = "admin@gopalcompany.com"
-  # Consumption tier is faster/cheaper, but Developer is fine if you have quota.
-  # If this fails next, we will switch to "Consumption".
-  sku_name            = "Developer_1" 
+  
+  # CHANGED: "Consumption_0" is Serverless, faster, and cheaper
+  sku_name            = "Consumption_0" 
 }
 
 # --- 3. Backend: AKS (API) + ACR ---
@@ -76,9 +74,7 @@ resource "azurerm_kubernetes_cluster" "aks" {
 
   default_node_pool {
     name       = "default"
-    # DOWNGRADED: 2 Nodes -> 1 Node (Saves vCPU quota)
-    node_count = 1 
-    # DOWNGRADED: DS2_v2 -> B2s (Cheaper/Smaller)
+    node_count = 1
     vm_size    = "Standard_B2s" 
   }
 
