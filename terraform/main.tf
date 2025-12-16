@@ -6,7 +6,6 @@ terraform {
     }
   }
 
-  # --- CRITICAL: Backend Configuration for State Storage ---
   backend "azurerm" {
     resource_group_name  = "tfstate-rg"
     storage_account_name = "gopalstate123"  # Matches your storage account
@@ -31,11 +30,11 @@ resource "azurerm_service_plan" "ui_plan" {
   resource_group_name = azurerm_resource_group.rg.name
   location            = azurerm_resource_group.rg.location
   os_type             = "Linux"
-  sku_name            = "P1v2"
+  # DOWNGRADED: P1v2 (Premium) -> B1 (Basic) to fit quota
+  sku_name            = "B1" 
 }
 
 resource "azurerm_linux_web_app" "ui_app" {
-  # Result: GopalDev-frontend-ui
   name                = "${var.prefix}-frontend-ui"
   resource_group_name = azurerm_resource_group.rg.name
   location            = azurerm_resource_group.rg.location
@@ -50,18 +49,18 @@ resource "azurerm_linux_web_app" "ui_app" {
 
 # --- 2. Gateway: API Management (APIM) ---
 resource "azurerm_api_management" "apim" {
-  # Result: GopalDev-apim
   name                = "${var.prefix}-apim"
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
   publisher_name      = "${var.prefix} Company"
   publisher_email     = "admin@gopalcompany.com"
-  sku_name            = "Developer_1"
+  # Consumption tier is faster/cheaper, but Developer is fine if you have quota.
+  # If this fails next, we will switch to "Consumption".
+  sku_name            = "Developer_1" 
 }
 
 # --- 3. Backend: AKS (API) + ACR ---
 resource "azurerm_container_registry" "acr" {
-  # ACR does not allow hyphens. Result: gopaldevacr
   name                = lower(replace("${var.prefix}acr", "-", ""))
   resource_group_name = azurerm_resource_group.rg.name
   location            = azurerm_resource_group.rg.location
@@ -70,7 +69,6 @@ resource "azurerm_container_registry" "acr" {
 }
 
 resource "azurerm_kubernetes_cluster" "aks" {
-  # Result: GopalDev-aks
   name                = "${var.prefix}-aks"
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
@@ -78,8 +76,10 @@ resource "azurerm_kubernetes_cluster" "aks" {
 
   default_node_pool {
     name       = "default"
-    node_count = 2
-    vm_size    = "Standard_DS2_v2"
+    # DOWNGRADED: 2 Nodes -> 1 Node (Saves vCPU quota)
+    node_count = 1 
+    # DOWNGRADED: DS2_v2 -> B2s (Cheaper/Smaller)
+    vm_size    = "Standard_B2s" 
   }
 
   identity {
@@ -87,11 +87,8 @@ resource "azurerm_kubernetes_cluster" "aks" {
   }
 }
 
-# NOTE: Role assignment removed to avoid permission errors.
-
 # --- 4. Database: Azure SQL ---
 resource "azurerm_mssql_server" "sql_server" {
-  # Result: GopalDev-sql-server
   name                         = lower("${var.prefix}-sql-server")
   resource_group_name          = azurerm_resource_group.rg.name
   location                     = azurerm_resource_group.rg.location

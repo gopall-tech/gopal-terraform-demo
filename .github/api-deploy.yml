@@ -6,10 +6,10 @@ on:
     paths: [ "api/**" ]
 
 env:
-  ACR_NAME: gopaldevacr               # Matches new Terraform name
+  ACR_NAME: gopaldevacr
   IMAGE_NAME: my-api-service
-  AKS_CLUSTER_NAME: GopalDev-aks      # Matches new Terraform name
-  AKS_RESOURCE_GROUP: GopalDev-resources-rg # Matches new Terraform name
+  AKS_CLUSTER_NAME: GopalDev-aks
+  AKS_RESOURCE_GROUP: GopalDev-resources-rg
 
 jobs:
   build-and-push:

@@ -7,7 +7,7 @@ variable "prefix" {
 variable "location" {
   description = "The Azure Region in which all resources in this example should be created."
   type        = string
-  default     = "East US 2"
+  default     = "West US" # Trying West US for better availability
 }
 
 variable "sql_admin_username" {
