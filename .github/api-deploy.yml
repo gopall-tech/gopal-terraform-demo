@@ -6,8 +6,9 @@ on:
     paths: [ "api/**" ]
 
 env:
-  ACR_NAME: gopalprojectdevacr          # Matches: prefix + environment + acr
-  AKS_CLUSTER_NAME: GopalProject-dev-aks # Matches: prefix - environment - aks
+  ACR_NAME: gopalprojectdevacr
+  IMAGE_NAME: my-api-service
+  AKS_CLUSTER_NAME: GopalProject-dev-aks
   AKS_RESOURCE_GROUP: GopalProject-dev-rg
 
 jobs:

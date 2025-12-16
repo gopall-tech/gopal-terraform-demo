@@ -10,7 +10,7 @@ terraform {
     resource_group_name  = "tfstate-rg"
     storage_account_name = "gopalstate123"
     container_name       = "tfstate"
-    key                  = "terraform.tfstate"
+    key                  = "dev.terraform.tfstate" # Changed to 'dev' state file
   }
 }
 
@@ -18,13 +18,13 @@ provider "azurerm" {
   features {}
 }
 
-# --- Resource Group (Environment Specific) ---
+# --- Resource Group ---
 resource "azurerm_resource_group" "rg" {
   name     = "${var.prefix}-${var.environment}-rg"
   location = var.location
 }
 
-# --- 1. API Management (Consumption Tier) ---
+# --- 1. API Management ---
 resource "azurerm_api_management" "apim" {
   name                = "${var.prefix}-${var.environment}-apim"
   location            = azurerm_resource_group.rg.location
@@ -69,10 +69,7 @@ resource "azurerm_postgresql_flexible_server" "postgres" {
   administrator_login    = var.sql_admin_username
   administrator_password = var.sql_admin_password
   storage_mb             = 32768
-  sku_name               = "B_Standard_B1ms"
-  
-  # Allow public access for simplicity (Student/Demo)
-  # In Prod, we would use VNET integration
+  sku_name               = "B_Standard_B1ms" # Burstable 1 vCore (Cheapest)
 }
 
 resource "azurerm_postgresql_flexible_server_database" "db" {
@@ -82,7 +79,7 @@ resource "azurerm_postgresql_flexible_server_database" "db" {
   charset   = "utf8"
 }
 
-# Allow Azure Services to access the DB
+# Allow All Azure Services (Simplifies access for AKS)
 resource "azurerm_postgresql_flexible_server_firewall_rule" "allow_azure" {
   name             = "allow-azure-services"
   server_id        = azurerm_postgresql_flexible_server.postgres.id
