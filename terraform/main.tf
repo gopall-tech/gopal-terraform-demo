@@ -29,7 +29,9 @@ resource "azurerm_service_plan" "ui_plan" {
   resource_group_name = azurerm_resource_group.rg.name
   location            = azurerm_resource_group.rg.location
   os_type             = "Linux"
-  sku_name            = "B1"
+  # DOWNGRADED: B1 (Basic) -> F1 (Free Tier)
+  # This is the only tier guaranteed on free accounts
+  sku_name            = "F1" 
 }
 
 resource "azurerm_linux_web_app" "ui_app" {
@@ -42,6 +44,8 @@ resource "azurerm_linux_web_app" "ui_app" {
     application_stack {
       node_version = "18-lts"
     }
+    # Free tier sometimes requires 'always_on' to be false
+    always_on = false
   }
 }
 
@@ -52,8 +56,6 @@ resource "azurerm_api_management" "apim" {
   resource_group_name = azurerm_resource_group.rg.name
   publisher_name      = "${var.prefix} Company"
   publisher_email     = "admin@gopalcompany.com"
-  
-  # CHANGED: "Consumption_0" is Serverless, faster, and cheaper
   sku_name            = "Consumption_0" 
 }
 

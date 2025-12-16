@@ -19,8 +19,8 @@ spec:
         - containerPort: 80
         env:
         - name: DB_CONNECTION_STRING
-          # Updated to match the new server name
-          value: "Server=tcp:gopaldev-sql-server.database.windows.net,1433;Initial Catalog=GopalDev-db;User ID=adminuser;Password=ComplexPassword123!;"
+          # Updated to match 'gopalfree-sql-server'
+          value: "Server=tcp:gopalfree-sql-server.database.windows.net,1433;Initial Catalog=GopalFree-db;User ID=adminuser;Password=ComplexPassword123!;"
 ---
 apiVersion: v1
 kind: Service
