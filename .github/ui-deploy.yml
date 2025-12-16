@@ -1,48 +1,54 @@
-name: Build and Deploy UI
+name: Build and Deploy UI to AKS
 
 on:
   push:
     branches: [ "main" ]
     paths: [ "ui/**" ]
 
+env:
+  ACR_NAME: gopalfreeacr               # Matches Terraform
+  IMAGE_NAME: my-ui-service
+  AKS_CLUSTER_NAME: GopalFree-aks      # Matches Terraform
+  AKS_RESOURCE_GROUP: GopalFree-resources-rg
+
 jobs:
-  build:
+  build-and-push:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
 
-    - name: Set up Node.js
-      uses: actions/setup-node@v3
+    - name: Azure Login
+      uses: azure/login@v1
       with:
-        node-version: '18'
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-    - name: Install and Build
+    - name: Login to ACR
+      run: az acr login --name ${{ env.ACR_NAME }}
+
+    - name: Build and Push Docker Image
       working-directory: ./ui
       run: |
-        npm install
-        npm run build --if-present
+        docker build . -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
+        docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
-    - name: Zip Artifact
-      run: zip -r release.zip ./ui/build
-
-    - name: Upload Artifact
-      uses: actions/upload-artifact@v3
-      with:
-        name: node-app
-        path: release.zip
-
-  deploy:
+  deploy-to-aks:
     runs-on: ubuntu-latest
-    needs: build
+    needs: build-and-push
     steps:
-    - name: Download Artifact
-      uses: actions/download-artifact@v3
-      with:
-        name: node-app
+    - uses: actions/checkout@v3
 
-    - name: Deploy to Azure Web App
-      uses: azure/webapps-deploy@v2
+    - name: Azure Login
+      uses: azure/login@v1
       with:
-        app-name: 'GopalFree-frontend-ui' # Updated to match new Terraform name
-        publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
-        package: release.zip
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Set AKS Context
+      uses: azure/aks-set-context@v3
+      with:
+        resource-group: ${{ env.AKS_RESOURCE_GROUP }}
+        cluster-name: ${{ env.AKS_CLUSTER_NAME }}
+
+    - name: Deploy to Kubernetes
+      run: |
+        sed -i "s|IMAGE_PLACEHOLDER|${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ github.sha }}|g" k8s/ui-deployment.yaml
+        kubectl apply -f k8s/ui-deployment.yaml

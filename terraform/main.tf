@@ -23,31 +23,7 @@ resource "azurerm_resource_group" "rg" {
   location = var.location
 }
 
-# --- 1. UI: Azure App Service ---
-resource "azurerm_service_plan" "ui_plan" {
-  name                = "${var.prefix}-ui-plan"
-  resource_group_name = azurerm_resource_group.rg.name
-  location            = azurerm_resource_group.rg.location
-  os_type             = "Linux"
-  # DOWNGRADED: B1 (Basic) -> F1 (Free Tier)
-  # This is the only tier guaranteed on free accounts
-  sku_name            = "F1" 
-}
-
-resource "azurerm_linux_web_app" "ui_app" {
-  name                = "${var.prefix}-frontend-ui"
-  resource_group_name = azurerm_resource_group.rg.name
-  location            = azurerm_resource_group.rg.location
-  service_plan_id     = azurerm_service_plan.ui_plan.id
-  
-  site_config {
-    application_stack {
-      node_version = "18-lts"
-    }
-    # Free tier sometimes requires 'always_on' to be false
-    always_on = false
-  }
-}
+# --- REMOVED: App Service Plan and Web App (Quota Blocked) ---
 
 # --- 2. Gateway: API Management (APIM) ---
 resource "azurerm_api_management" "apim" {
