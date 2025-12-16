@@ -1,23 +1,29 @@
 variable "prefix" {
-  description = "The prefix used for all resources in this example"
+  description = "The prefix used for all resources"
   type        = string
-  default     = "GopalFree"
+  default     = "GopalProject"
+}
+
+variable "environment" {
+  description = "The deployment environment (dev, qa, prod)"
+  type        = string
+  default     = "dev" 
 }
 
 variable "location" {
-  description = "The Azure Region in which all resources in this example should be created."
+  description = "The Azure Region"
   type        = string
   default     = "North Central US"
 }
 
 variable "sql_admin_username" {
-  description = "Administrator username for the SQL Server"
+  description = "Database Administrator username"
   type        = string
   default     = "adminuser"
 }
 
 variable "sql_admin_password" {
-  description = "Administrator password for the SQL Server"
+  description = "Database Administrator password"
   type        = string
   sensitive   = true
   default     = "ComplexPassword123!" 

@@ -10,6 +10,10 @@ output "aks_cluster_name" {
   value = azurerm_kubernetes_cluster.aks.name
 }
 
-output "sql_server_fqdn" {
-  value = azurerm_mssql_server.sql_server.fully_qualified_domain_name
+output "postgres_server_fqdn" {
+  value = azurerm_postgresql_flexible_server.postgres.fqdn
+}
+
+output "postgres_db_name" {
+  value = azurerm_postgresql_flexible_server_database.db.name
 }
