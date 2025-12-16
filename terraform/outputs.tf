@@ -13,3 +13,7 @@ output "postgres_server_fqdn" {
 output "postgres_db_name" {
   value = azurerm_postgresql_flexible_server_database.db.name
 }
+
+output "apim_gateway_url" {
+  value = azurerm_api_management.apim.gateway_url
+}

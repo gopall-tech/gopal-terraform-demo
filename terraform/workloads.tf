@@ -1,7 +1,7 @@
 # --- BACKEND A (Simulated User Service) ---
 resource "kubernetes_deployment" "backend_a" {
   metadata {
-    name = "backend-a"
+    name   = "backend-a"
     labels = { app = "backend-a" }
   }
   spec {
@@ -11,7 +11,7 @@ resource "kubernetes_deployment" "backend_a" {
       metadata { labels = { app = "backend-a" } }
       spec {
         container {
-          image = "nginx:latest" # Represents Service A
+          image = "nginx:latest"
           name  = "backend-a"
         }
       }
@@ -27,14 +27,14 @@ resource "kubernetes_service" "service_a" {
       port        = 80
       target_port = 80
     }
-    type = "ClusterIP" # Internal only (APIM will talk to this later)
+    type = "LoadBalancer" # <--- CHANGED: Expose to outside world
   }
 }
 
 # --- BACKEND B (Simulated Order Service) ---
 resource "kubernetes_deployment" "backend_b" {
   metadata {
-    name = "backend-b"
+    name   = "backend-b"
     labels = { app = "backend-b" }
   }
   spec {
@@ -44,7 +44,7 @@ resource "kubernetes_deployment" "backend_b" {
       metadata { labels = { app = "backend-b" } }
       spec {
         container {
-          image = "httpd:latest" # Represents Service B (different image)
+          image = "httpd:latest"
           name  = "backend-b"
         }
       }
@@ -60,6 +60,6 @@ resource "kubernetes_service" "service_b" {
       port        = 80
       target_port = 80
     }
-    type = "ClusterIP"
+    type = "LoadBalancer" # <--- CHANGED: Expose to outside world
   }
 }
