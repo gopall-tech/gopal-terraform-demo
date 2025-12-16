@@ -2,13 +2,7 @@ output "resource_group_name" {
   value = azurerm_resource_group.rg.name
 }
 
-output "ui_web_app_name" {
-  value = azurerm_linux_web_app.ui_app.name
-}
-
-output "ui_web_app_url" {
-  value = "https://${azurerm_linux_web_app.ui_app.default_hostname}"
-}
+# --- REMOVED UI OUTPUTS (App Service Deleted) ---
 
 output "acr_login_server" {
   value = azurerm_container_registry.acr.login_server
