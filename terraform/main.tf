@@ -6,7 +6,7 @@ terraform {
     }
   }
 
-  # Backend empty for dynamic injection (dev, qa, prod)
+  # Backend empty for dynamic injection (dev, qa, prod) via pipeline
   backend "azurerm" {
     resource_group_name  = "tfstate-rg"
     storage_account_name = "gopalstate123"
@@ -49,7 +49,7 @@ resource "azurerm_kubernetes_cluster" "aks" {
   resource_group_name = azurerm_resource_group.rg.name
   dns_prefix          = "${lower(var.prefix)}${var.environment}aks"
   
-  # FIX: Define a clean name for the infrastructure group
+  # Clean name for the infrastructure group
   node_resource_group = "${var.prefix}-${var.environment}-nodes-rg"
 
   default_node_pool {
@@ -87,4 +87,13 @@ resource "azurerm_postgresql_flexible_server_firewall_rule" "allow_azure" {
   server_id        = azurerm_postgresql_flexible_server.postgres.id
   start_ip_address = "0.0.0.0"
   end_ip_address   = "0.0.0.0"
+}
+
+# --- 4. Role Assignment (CRITICAL FIX) ---
+# Allows the AKS Cluster (kubelet) to pull images from the Container Registry (ACR)
+resource "azurerm_role_assignment" "aks_acr_pull" {
+  principal_id                     = azurerm_kubernetes_cluster.aks.kubelet_identity[0].object_id
+  role_definition_name             = "AcrPull"
+  scope                            = azurerm_container_registry.acr.id
+  skip_service_principal_aad_check = true
 }
