@@ -23,19 +23,17 @@ resource "azurerm_resource_group" "rg" {
   location = var.location
 }
 
-# --- REMOVED: App Service Plan and Web App (Quota Blocked) ---
-
-# --- 2. Gateway: API Management (APIM) ---
+# --- 1. API Management (APIM) ---
 resource "azurerm_api_management" "apim" {
   name                = "${var.prefix}-apim"
   location            = azurerm_resource_group.rg.location
   resource_group_name = azurerm_resource_group.rg.name
   publisher_name      = "${var.prefix} Company"
   publisher_email     = "admin@gopalcompany.com"
-  sku_name            = "Consumption_0" 
+  sku_name            = "Consumption_0"
 }
 
-# --- 3. Backend: AKS (API) + ACR ---
+# --- 2. AKS (Cluster) + ACR (Registry) ---
 resource "azurerm_container_registry" "acr" {
   name                = lower(replace("${var.prefix}acr", "-", ""))
   resource_group_name = azurerm_resource_group.rg.name
@@ -53,7 +51,7 @@ resource "azurerm_kubernetes_cluster" "aks" {
   default_node_pool {
     name       = "default"
     node_count = 1
-    vm_size    = "Standard_B2s" 
+    vm_size    = "Standard_B2s"
   }
 
   identity {
@@ -61,7 +59,7 @@ resource "azurerm_kubernetes_cluster" "aks" {
   }
 }
 
-# --- 4. Database: Azure SQL ---
+# --- 3. Database: Azure SQL ---
 resource "azurerm_mssql_server" "sql_server" {
   name                         = lower("${var.prefix}-sql-server")
   resource_group_name          = azurerm_resource_group.rg.name

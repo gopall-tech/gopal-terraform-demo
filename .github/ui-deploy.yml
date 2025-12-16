@@ -6,9 +6,9 @@ on:
     paths: [ "ui/**" ]
 
 env:
-  ACR_NAME: gopalfreeacr               # Matches Terraform
+  ACR_NAME: gopalfreeacr
   IMAGE_NAME: my-ui-service
-  AKS_CLUSTER_NAME: GopalFree-aks      # Matches Terraform
+  AKS_CLUSTER_NAME: GopalFree-aks
   AKS_RESOURCE_GROUP: GopalFree-resources-rg
 
 jobs:

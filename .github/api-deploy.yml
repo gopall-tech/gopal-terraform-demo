@@ -6,10 +6,10 @@ on:
     paths: [ "api/**" ]
 
 env:
-  ACR_NAME: gopalfreeacr               # Updated: lowercase, no hyphens
+  ACR_NAME: gopalfreeacr
   IMAGE_NAME: my-api-service
-  AKS_CLUSTER_NAME: GopalFree-aks      # Updated: Matches new Terraform name
-  AKS_RESOURCE_GROUP: GopalFree-resources-rg # Updated: Matches new Terraform name
+  AKS_CLUSTER_NAME: GopalFree-aks
+  AKS_RESOURCE_GROUP: GopalFree-resources-rg
 
 jobs:
   build-and-push:
