@@ -29,15 +29,15 @@ jobs:
     env:
       TF_TARGET: ${{ github.event.inputs.target || 'all' }}
 
-      # Terraform state backend (Azure Storage) - set these GitHub Secrets
+      # Terraform state backend (Azure Storage) - GitHub Secrets
       TF_STATE_RG: ${{ secrets.TF_STATE_RG }}
       TF_STATE_STORAGE: ${{ secrets.TF_STATE_STORAGE }}
       TF_STATE_CONTAINER: ${{ secrets.TF_STATE_CONTAINER }}
 
-      # Sensitive TF var (set as GitHub Secret)
+      # Sensitive TF var (GitHub Secret)
       TF_VAR_postgres_admin_password: ${{ secrets.TF_VAR_POSTGRES_ADMIN_PASSWORD }}
 
-      # Make backend auth explicit (use the SAME SP as azure/login)
+      # Make auth explicit (same SP as AZURE_CREDENTIALS)
       ARM_CLIENT_ID: ${{ fromJson(secrets.AZURE_CREDENTIALS).clientId }}
       ARM_CLIENT_SECRET: ${{ fromJson(secrets.AZURE_CREDENTIALS).clientSecret }}
       ARM_SUBSCRIPTION_ID: ${{ fromJson(secrets.AZURE_CREDENTIALS).subscriptionId }}
@@ -54,7 +54,7 @@ jobs:
 
       - name: Debug identity (safe)
         run: |
-          echo "Using ARM_CLIENT_ID=$ARM_CLIENT_ID"
+          echo "ARM_CLIENT_ID=$ARM_CLIENT_ID"
           az account show -o table
 
       - name: Setup Terraform
@@ -67,6 +67,26 @@ jobs:
           if [ -z "$TF_STATE_RG" ]; then echo "TF_STATE_RG is empty"; exit 1; fi
           if [ -z "$TF_STATE_STORAGE" ]; then echo "TF_STATE_STORAGE is empty"; exit 1; fi
           if [ -z "$TF_STATE_CONTAINER" ]; then echo "TF_STATE_CONTAINER is empty"; exit 1; fi
+          echo "TF_STATE_RG=$TF_STATE_RG"
+          echo "TF_STATE_STORAGE=$TF_STATE_STORAGE"
+          echo "TF_STATE_CONTAINER=$TF_STATE_CONTAINER"
+
+      - name: Test Storage access (must succeed before terraform init)
+        run: |
+          az account set --subscription "$ARM_SUBSCRIPTION_ID"
+          echo "Testing container access with AAD login..."
+          az storage container show \
+            --name "$TF_STATE_CONTAINER" \
+            --account-name "$TF_STATE_STORAGE" \
+            --auth-mode login
+
+          echo "Listing blobs (if empty, that's fine)..."
+          az storage blob list \
+            --container-name "$TF_STATE_CONTAINER" \
+            --account-name "$TF_STATE_STORAGE" \
+            --auth-mode login \
+            --num-results 5 \
+            -o table
 
       - name: Terraform Init (remote state)
         working-directory: terraform
