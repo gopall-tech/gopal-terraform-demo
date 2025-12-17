@@ -90,7 +90,7 @@ kubectl get services
 * **Test Backend:** Copy the `EXTERNAL-IP` of `api-service` and append `/db-test`.
     * *Success:* Returns JSON `{ "message": "Database Connected!", "time": "..." }`.
 
-## Project Structure
+## Project Structure 
 
 * `terraform/`: Infrastructure as Code (AKS, PGSQL, APIM).
 * `zzz/ui/`: React Source Code.
