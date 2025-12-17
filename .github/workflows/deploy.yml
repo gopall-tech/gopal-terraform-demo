@@ -49,11 +49,17 @@ jobs:
         docker build -t ${{ secrets.DOCKER_USERNAME }}/my-ui:v1 .
         docker push ${{ secrets.DOCKER_USERNAME }}/my-ui:v1
 
-    - name: Build API
+    - name: Build API (Backend A)
       working-directory: ./zzz/api
       run: |
         docker build -t ${{ secrets.DOCKER_USERNAME }}/my-api:v1 .
         docker push ${{ secrets.DOCKER_USERNAME }}/my-api:v1
+
+    - name: Build NFL Service (Backend B)
+      working-directory: ./zzz/python-service
+      run: |
+        docker build -t ${{ secrets.DOCKER_USERNAME }}/my-python-service:v1 .
+        docker push ${{ secrets.DOCKER_USERNAME }}/my-python-service:v1
 
     # 6. Deploy to Kubernetes (AKS)
     - name: Get AKS Credentials
@@ -63,3 +69,4 @@ jobs:
       run: |
         kubectl apply -f k8s/deployment.yaml
         kubectl apply -f k8s/ui-deployment.yaml
+        kubectl apply -f k8s/nfl-deployment.yaml
