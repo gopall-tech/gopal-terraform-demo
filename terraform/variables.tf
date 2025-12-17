@@ -15,3 +15,9 @@ variable "environments" {
   # CHANGED: Deploy only "dev" to fit inside Azure Student Quota
   default     = ["dev"] 
 }
+
+variable "environment" {
+  description = "Deployment environment (dev, qa, prod)"
+  type        = string
+  default     = "dev"
+}
