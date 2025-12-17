@@ -58,7 +58,8 @@ jobs:
             -backend-config="resource_group_name=${TF_STATE_RG}" \
             -backend-config="storage_account_name=${TF_STATE_STORAGE}" \
             -backend-config="container_name=${TF_STATE_CONTAINER}" \
-            -backend-config="key=infra.tfstate"
+            -backend-config="key=infra.tfstate" \
+            -backend-config="use_azuread_auth=true"
 
       - name: Terraform Plan
         working-directory: terraform
