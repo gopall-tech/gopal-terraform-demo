@@ -7,7 +7,7 @@ variable "prefix" {
 variable "location" {
   description = "Azure region."
   type        = string
-  default     = "West US 2"
+  default     = "westus2"
 }
 
 variable "environments" {
@@ -58,4 +58,18 @@ variable "ui_plan_sku_name" {
   description = "App Service plan SKU (cheap & reliable: B1)."
   type        = string
   default     = "B1"
+}
+
+# --- ADDED MISSING VARIABLES BELOW ---
+
+variable "aks_node_count" {
+  description = "Number of worker nodes for the AKS cluster."
+  type        = number
+  default     = 1
+}
+
+variable "aks_vm_size" {
+  description = "VM size for the AKS nodes."
+  type        = string
+  default     = "Standard_B2s"
 }
