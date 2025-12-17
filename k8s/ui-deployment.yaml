@@ -14,7 +14,7 @@ spec:
     spec:
       containers:
       - name: my-ui-container
-        image: IMAGE_PLACEHOLDER
+        image: gopalwalia2025/my-ui:v1
         ports:
         - containerPort: 80
 ---

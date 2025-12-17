@@ -1,36 +1,37 @@
-# Gopal Terraform Microservices Infrastructure
+# Gopal Cloud Project: Full Stack Microservices on Azure
 
-This project deploys a complete Microservices architecture on Azure using Terraform. It provisions an AKS cluster with multiple backends, an API Management gateway for routing, and a PostgreSQL database for persistence.
+This project deploys a complete 3-Tier Microservices architecture on Azure using Terraform and Kubernetes. It provisions an AKS cluster, an API Management gateway, and a managed PostgreSQL database, then deploys a custom React Frontend and Node.js Backend.
 
 ## Architecture
 
-The infrastructure follows a split-service architecture where traffic is routed via an API Gateway to specific microservices running in Kubernetes.
+The infrastructure follows a modern cloud-native design where the frontend and backend run as containerized microservices in Kubernetes, connected to a managed database.
 
 ![Architecture Diagram](./images/image.png)
 
 ## Components
 
-* **Azure Kubernetes Service (AKS):** Hosts the application workloads.
-    * **Backend A:** Nginx service (Simulating User Service).
-    * **Backend B:** Apache service (Simulating Order Service).
-* **Azure API Management (APIM):** Acts as the API Gateway.
-    * Routes `/a` traffic to Backend A.
-    * Routes `/b` traffic to Backend B.
-* **Azure Database for PostgreSQL:** Managed persistence layer (deployed in East US 2).
-* **Networking:** Public Load Balancers expose the pods to the APIM gateway.
+* **Frontend (UI):** React.js application running on AKS (User Interface).
+* **Backend (API):** Node.js Express API running on AKS (Business Logic).
+* **Database:** Azure Database for PostgreSQL (Flexible Server).
+* **Orchestration:** Azure Kubernetes Service (AKS).
+* **Gateway:** Azure API Management (APIM) for potential routing and security.
 
 ## Prerequisites
 
 * [Azure CLI](https://docs.microsoft.com/en-us/cli/azure/install-azure-cli)
 * [Terraform](https://www.terraform.io/downloads.html)
-* [Git](https://git-scm.com/)
+* [Docker Desktop](https://www.docker.com/products/docker-desktop)
+* [kubectl](https://kubernetes.io/docs/tasks/tools/)
 
 ## Deployment Instructions
+
+### Phase 1: Infrastructure (Terraform)
+Provision the hardware (Cluster, Database, Networking).
 
 1.  **Clone the repository:**
     ```bash
     git clone <your-repo-url>
-    cd gopal-terraform-demo
+    cd gopal-terraform-demo/terraform
     ```
 
 2.  **Login to Azure:**
@@ -38,44 +39,68 @@ The infrastructure follows a split-service architecture where traffic is routed 
     az login
     ```
 
-3.  **Initialize Terraform:**
+3.  **Deploy Resources:**
     ```bash
     terraform init
-    ```
-
-4.  **Deploy Infrastructure:**
-    ```bash
     terraform apply -auto-approve
     ```
-    *Note: API Management creation may take 45-60 minutes.*
+    *Note: This creates the "dev" environment in West US 2.*
 
-5.  **Get Load Balancer IPs (Mid-Deployment Step):**
-    If deploying for the first time, you may need to update the `apim.tf` file with the external IPs of the services:
+### Phase 2: Software Build (Docker)
+Package the application code into containers.
+
+1.  **Build & Push API:**
     ```bash
-    kubectl get svc
+    cd ../zzz/api
+    docker build -t <your-docker-hub-user>/my-api:v1 .
+    docker push <your-docker-hub-user>/my-api:v1
     ```
-    Update the `service_url` in `apim.tf` with the resulting IPs.
+
+2.  **Build & Push UI:**
+    ```bash
+    cd ../zzz/ui
+    docker build -t <your-docker-hub-user>/my-ui:v1 .
+    docker push <your-docker-hub-user>/my-ui:v1
+    ```
+
+### Phase 3: Deployment (Kubernetes)
+Launch the containers into the AKS cluster.
+
+1.  **Connect to Cluster:**
+    ```bash
+    az aks get-credentials --resource-group GopalCloud-dev-resources --name GopalCloud-dev-aks
+    ```
+
+2.  **Deploy Services:**
+    ```bash
+    cd ..
+    kubectl apply -f k8s/deployment.yaml    # Deploys API
+    kubectl apply -f k8s/ui-deployment.yaml # Deploys UI
+    ```
 
 ## Verification & Testing
 
-Once deployment is complete, Terraform will output the `apim_gateway_url`. You can test the routing logic via a web browser:
+Get the public IP addresses for your services:
 
-* **Service A:** `https://<your-apim-url>/a` -> Returns Nginx Welcome Page.
-* **Service B:** `https://<your-apim-url>/b` -> Returns Apache 'It works!' Page.
+```bash
+kubectl get services
+```
+* **Test Frontend:** Copy the `EXTERNAL-IP` of `ui-service` and paste it into your browser.
+    * *Success:* You see the "Gopal's Cloud Project" React Dashboard.
+* **Test Backend:** Copy the `EXTERNAL-IP` of `api-service` and append `/db-test`.
+    * *Success:* Returns JSON `{ "message": "Database Connected!", "time": "..." }`.
 
 ## Project Structure
 
-* `main.tf`: Resource Group and AKS Cluster definition.
-* `workloads.tf`: Kubernetes Deployments and Services (Backend A & B).
-* `database.tf`: PostgreSQL Flexible Server configuration.
-* `apim.tf`: API Management Gateway and routing rules.
-* `variables.tf`: Project configuration (Prefix, Region).
-* `outputs.tf`: Displays connection URLs and resource names.
+* `terraform/`: Infrastructure as Code (AKS, PGSQL, APIM).
+* `zzz/ui/`: React Source Code.
+* `zzz/api/`: Node.js Source Code.
+* `k8s/`: Kubernetes Manifests (Deployments & Services).
 
 ## Cleanup
 
-To destroy all resources and avoid costs:
+To destroy all resources and stop billing:
 
 ```bash
+cd terraform
 terraform destroy -auto-approve
-```

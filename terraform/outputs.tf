@@ -1,19 +1,11 @@
-output "resource_group_name" {
-  value = azurerm_resource_group.rg.name
+output "aks_clusters" {
+  value = { for k, v in azurerm_kubernetes_cluster.aks : k => v.name }
 }
 
-output "aks_cluster_name" {
-  value = azurerm_kubernetes_cluster.aks.name
+output "ui_urls" {
+  value = { for k, v in azurerm_linux_web_app.ui_app : k => "https://${v.default_hostname}" }
 }
 
-output "postgres_server_fqdn" {
-  value = azurerm_postgresql_flexible_server.postgres.fqdn
-}
-
-output "postgres_db_name" {
-  value = azurerm_postgresql_flexible_server_database.db.name
-}
-
-output "apim_gateway_url" {
-  value = azurerm_api_management.apim.gateway_url
+output "apim_urls" {
+  value = { for k, v in azurerm_api_management.apim : k => v.gateway_url }
 }

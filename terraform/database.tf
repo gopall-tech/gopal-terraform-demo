@@ -1,28 +1,31 @@
 resource "azurerm_postgresql_flexible_server" "postgres" {
-  # CHANGED: Added "-2" to the name to avoid conflict with the failed East US resource
-  name = "${lower(var.prefix)}-db-server-2"
+  for_each = var.environments
 
-  resource_group_name    = azurerm_resource_group.rg.name
-  location               = "East US 2" # Keeping this as East US 2
+  name                   = "${lower(var.prefix)}-${each.key}-db-server"
+  resource_group_name    = azurerm_resource_group.rg[each.key].name
+  location               = azurerm_resource_group.rg[each.key].location
   version                = "13"
   administrator_login    = "gopaladmin"
-  administrator_password = "MyComplexPassword123!"
+  administrator_password = "MyComplexPassword123!" 
   storage_mb             = 32768
   sku_name               = "B_Standard_B1ms"
-  zone                   = "1"
+  # zone                   = "1" # Comment out zone if you hit availability errors
 }
 
 resource "azurerm_postgresql_flexible_server_database" "db" {
+  for_each = var.environments
+
   name      = "appdb"
-  server_id = azurerm_postgresql_flexible_server.postgres.id
+  server_id = azurerm_postgresql_flexible_server.postgres[each.key].id
   collation = "en_US.utf8"
   charset   = "utf8"
 }
 
-# This rule allows "Azure Services" (like your AKS cluster) to access the DB
 resource "azurerm_postgresql_flexible_server_firewall_rule" "allow_azure" {
+  for_each = var.environments
+
   name             = "allow-azure-services"
-  server_id        = azurerm_postgresql_flexible_server.postgres.id
+  server_id        = azurerm_postgresql_flexible_server.postgres[each.key].id
   start_ip_address = "0.0.0.0"
   end_ip_address   = "0.0.0.0"
 }
