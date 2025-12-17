@@ -103,4 +103,4 @@ To destroy all resources and stop billing:
 
 ```bash
 cd terraform
-terraform destroy -auto-approve
+terraform destroy -auto-approve 
