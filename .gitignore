@@ -1,17 +1,17 @@
-# Local .terraform directories
-**/.terraform/*
-
-# .tfstate files (NEVER commit these!)
+# Terraform
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.*
 *.tfstate
 *.tfstate.*
 
-# Crash log files
-crash.log
-override.tf
-override.tf.json
-*_override.tf
-*_override.tf.json
+# Node / React
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
-# CLI configuration files
-.terraformrc
-terraform.rc
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/

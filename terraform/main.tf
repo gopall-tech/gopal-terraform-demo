@@ -1,19 +1,28 @@
-# 1. Create Three Resource Groups
+resource "random_string" "suffix" {
+  for_each = var.environments
+  length   = 6
+  upper    = false
+  special  = false
+  numeric  = true
+}
+
+# Resource Groups (1 per env)
 resource "azurerm_resource_group" "rg" {
   for_each = var.environments
 
-  name     = "${var.prefix}-${each.key}-resources"
+  name     = "${var.prefix}-${each.key}-rg"
   location = var.location
+  tags     = merge(var.tags, { env = each.key })
 }
 
-# 2. Create Three AKS Clusters
+# AKS (1 per env)
 resource "azurerm_kubernetes_cluster" "aks" {
   for_each = var.environments
 
   name                = "${var.prefix}-${each.key}-aks"
   location            = azurerm_resource_group.rg[each.key].location
   resource_group_name = azurerm_resource_group.rg[each.key].name
-  dns_prefix          = "${lower(var.prefix)}-${each.key}-aks"
+  dns_prefix          = "${var.prefix}-${each.key}"
 
   default_node_pool {
     name       = "default"
@@ -24,4 +33,6 @@ resource "azurerm_kubernetes_cluster" "aks" {
   identity {
     type = "SystemAssigned"
   }
+
+  tags = merge(var.tags, { env = each.key })
 }

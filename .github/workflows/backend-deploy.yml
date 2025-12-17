@@ -1,0 +1,211 @@
+name: Deploy Backend (AKS + APIM)
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "api/**"
+      - "api-b/**"
+      - "k8s/**"
+      - ".github/workflows/backend-deploy.yml"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target Environment"
+        required: true
+        default: "dev"
+        type: choice
+        options:
+          - dev
+          - qa
+          - prod
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy-backend:
+    runs-on: ubuntu-latest
+    env:
+      ENV_NAME: ${{ github.event.inputs.environment || 'dev' }}
+
+      TF_STATE_RG: ${{ secrets.TF_STATE_RG }}
+      TF_STATE_STORAGE: ${{ secrets.TF_STATE_STORAGE }}
+      TF_STATE_CONTAINER: ${{ secrets.TF_STATE_CONTAINER }}
+
+      DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+      DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+
+      # DB secret passed to k8s secret (never commit this)
+      DB_PASSWORD: ${{ secrets.TF_VAR_POSTGRES_ADMIN_PASSWORD }}
+      DB_USER: gopaladmin
+      DB_NAME: appdb
+
+      # From AZURE_CREDENTIALS JSON
+      SUBSCRIPTION_ID: ${{ fromJson(secrets.AZURE_CREDENTIALS).subscriptionId }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ env.DOCKER_USERNAME }}
+          password: ${{ env.DOCKER_PASSWORD }}
+
+      - name: Setup Terraform (for outputs)
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_wrapper: false
+
+      - name: Terraform Init (remote state)
+        working-directory: terraform
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${TF_STATE_RG}" \
+            -backend-config="storage_account_name=${TF_STATE_STORAGE}" \
+            -backend-config="container_name=${TF_STATE_CONTAINER}" \
+            -backend-config="key=infra.tfstate"
+
+      - name: Read Terraform outputs
+        working-directory: terraform
+        run: terraform output -json > tfout.json
+
+      - name: Resolve infra names for environment
+        id: names
+        working-directory: terraform
+        run: |
+          RG=$(jq -r --arg env "$ENV_NAME" '.resource_groups.value[$env]' tfout.json)
+          AKS=$(jq -r --arg env "$ENV_NAME" '.aks_clusters.value[$env]' tfout.json)
+          APIM=$(jq -r --arg env "$ENV_NAME" '.apim_names.value[$env]' tfout.json)
+          DB_HOST=$(jq -r --arg env "$ENV_NAME" '.postgres_fqdns.value[$env]' tfout.json)
+
+          echo "RG=$RG" >> $GITHUB_ENV
+          echo "AKS=$AKS" >> $GITHUB_ENV
+          echo "APIM=$APIM" >> $GITHUB_ENV
+          echo "DB_HOST=$DB_HOST" >> $GITHUB_ENV
+
+      - name: Build & Push API A image
+        working-directory: api
+        run: |
+          IMAGE_A="${DOCKER_USERNAME}/gopal-api-a:${ENV_NAME}-${GITHUB_SHA}"
+          docker build -t "$IMAGE_A" .
+          docker push "$IMAGE_A"
+          echo "IMAGE_A=$IMAGE_A" >> $GITHUB_ENV
+
+      - name: Build & Push API B image
+        working-directory: api-b
+        run: |
+          IMAGE_B="${DOCKER_USERNAME}/gopal-api-b:${ENV_NAME}-${GITHUB_SHA}"
+          docker build -t "$IMAGE_B" .
+          docker push "$IMAGE_B"
+          echo "IMAGE_B=$IMAGE_B" >> $GITHUB_ENV
+
+      - name: Get AKS credentials
+        run: |
+          az aks get-credentials \
+            --resource-group "$RG" \
+            --name "$AKS" \
+            --overwrite-existing
+
+      - name: Create namespace
+        run: kubectl apply -f k8s/00-namespace.yaml
+
+      - name: Create/Update DB secret (no plaintext in repo)
+        run: |
+          kubectl -n gopal-app create secret generic db-conn \
+            --from-literal=host="$DB_HOST" \
+            --from-literal=name="$DB_NAME" \
+            --from-literal=user="$DB_USER" \
+            --from-literal=password="$DB_PASSWORD" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Deploy API A + API B manifests
+        run: |
+          sed "s|IMAGE_API_A|$IMAGE_A|g" k8s/api-a.yaml | kubectl apply -f -
+          sed "s|IMAGE_API_B|$IMAGE_B|g" k8s/api-b.yaml | kubectl apply -f -
+
+      - name: Wait for LoadBalancer IPs
+        run: |
+          echo "Waiting for API A LB IP..."
+          for i in {1..60}; do
+            IP_A=$(kubectl -n gopal-app get svc api-a-service -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
+            if [ -n "$IP_A" ]; then break; fi
+            sleep 10
+          done
+          if [ -z "$IP_A" ]; then echo "API A LB IP not assigned"; exit 1; fi
+
+          echo "Waiting for API B LB IP..."
+          for i in {1..60}; do
+            IP_B=$(kubectl -n gopal-app get svc api-b-service -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
+            if [ -n "$IP_B" ]; then break; fi
+            sleep 10
+          done
+          if [ -z "$IP_B" ]; then echo "API B LB IP not assigned"; exit 1; fi
+
+          echo "IP_A=$IP_A" >> $GITHUB_ENV
+          echo "IP_B=$IP_B" >> $GITHUB_ENV
+
+      - name: Configure APIM routes (api-a / api-b) + CORS (via az rest)
+        run: |
+          API_VERSION="2022-08-01"
+          BASE="https://management.azure.com/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RG}/providers/Microsoft.ApiManagement/service/${APIM}"
+
+          # Upsert API A
+          az rest --method put \
+            --uri "${BASE}/apis/api-a?api-version=${API_VERSION}" \
+            --headers "Content-Type=application/json" \
+            --body "{\"properties\":{\"displayName\":\"API A\",\"path\":\"api-a\",\"protocols\":[\"https\"],\"serviceUrl\":\"http://${IP_A}\",\"subscriptionRequired\":false}}"
+
+          # Upsert API B
+          az rest --method put \
+            --uri "${BASE}/apis/api-b?api-version=${API_VERSION}" \
+            --headers "Content-Type=application/json" \
+            --body "{\"properties\":{\"displayName\":\"API B\",\"path\":\"api-b\",\"protocols\":[\"https\"],\"serviceUrl\":\"http://${IP_B}\",\"subscriptionRequired\":false}}"
+
+          # CORS policy (allow all) for API A
+          cat > policy.xml << 'EOF'
+          <policies>
+            <inbound>
+              <base />
+              <cors allow-credentials="false">
+                <allowed-origins>
+                  <origin>*</origin>
+                </allowed-origins>
+                <allowed-methods>
+                  <method>GET</method>
+                  <method>POST</method>
+                  <method>PUT</method>
+                  <method>DELETE</method>
+                  <method>OPTIONS</method>
+                </allowed-methods>
+                <allowed-headers>
+                  <header>*</header>
+                </allowed-headers>
+                <expose-headers>
+                  <header>*</header>
+                </expose-headers>
+              </cors>
+            </inbound>
+            <backend><base /></backend>
+            <outbound><base /></outbound>
+            <on-error><base /></on-error>
+          </policies>
+          EOF
+
+          az rest --method put \
+            --uri "${BASE}/apis/api-a/policies/policy?api-version=${API_VERSION}" \
+            --headers "Content-Type=application/vnd.ms-azure-apim.policy+xml" \
+            --body @policy.xml
+
+          az rest --method put \
+            --uri "${BASE}/apis/api-b/policies/policy?api-version=${API_VERSION}" \
+            --headers "Content-Type=application/vnd.ms-azure-apim.policy+xml" \
+            --body @policy.xml

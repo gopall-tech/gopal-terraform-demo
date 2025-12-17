@@ -1,23 +1,61 @@
 variable "prefix" {
-  description = "The prefix for all resources"
-  # CHANGED: New name to bypass the "Already Exists" error
-  default     = "GopalCloud" 
+  description = "Prefix for resources (naming convention)."
+  type        = string
+  default     = "gopalcloud"
 }
 
 variable "location" {
-  description = "The Azure Region"
+  description = "Azure region."
+  type        = string
   default     = "West US 2"
 }
 
 variable "environments" {
-  description = "The environments to deploy"
+  description = "Environments to deploy."
   type        = set(string)
-  # CHANGED: Deploy only "dev" to fit inside Azure Student Quota
-  default     = ["dev"] 
+  default     = ["dev", "qa", "prod"]
 }
 
-variable "environment" {
-  description = "Deployment environment (dev, qa, prod)"
+variable "tags" {
+  description = "Common tags."
+  type        = map(string)
+  default = {
+    project = "gopal-capstone"
+  }
+}
+
+variable "postgres_admin_user" {
+  description = "PostgreSQL admin user."
   type        = string
-  default     = "dev"
+  default     = "gopaladmin"
+}
+
+variable "postgres_admin_password" {
+  description = "PostgreSQL admin password."
+  type        = string
+  sensitive   = true
+}
+
+variable "apim_sku_name" {
+  description = "APIM SKU (cheaper: Consumption_0)."
+  type        = string
+  default     = "Consumption_0"
+}
+
+variable "apim_publisher_name" {
+  description = "APIM publisher name."
+  type        = string
+  default     = "Gopal Corp"
+}
+
+variable "apim_publisher_email" {
+  description = "APIM publisher email."
+  type        = string
+  default     = "gopal@example.com"
+}
+
+variable "ui_plan_sku_name" {
+  description = "App Service plan SKU (cheap & reliable: B1)."
+  type        = string
+  default     = "B1"
 }

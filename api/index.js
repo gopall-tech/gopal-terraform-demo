@@ -1,39 +1,31 @@
-const express = require('express');
-const { Client } = require('pg');
+const express = require("express");
+const { Pool } = require("pg");
+
 const app = express();
 const port = 80;
 
-// Database Connection Config
-// These variables will come from Kubernetes (defined in deployment.yaml)
-const client = new Client({
-  user: process.env.DB_USER || 'adminuser',
+const pool = new Pool({
+  user: process.env.DB_USER || "gopaladmin",
   host: process.env.DB_HOST,
-  database: process.env.DB_NAME,
+  database: process.env.DB_NAME || "appdb",
   password: process.env.DB_PASSWORD,
   port: 5432,
-  ssl: { rejectUnauthorized: false } // Required for Azure PostgreSQL Flexible Server
+  ssl: { rejectUnauthorized: false }
 });
 
-// Connect to DB
-client.connect()
-  .then(() => console.log('Connected to PostgreSQL successfully!'))
-  .catch(err => console.error('Connection error', err.stack));
+app.get("/health", (_req, res) => res.json({ service: "api-a", status: "ok" }));
 
-// Basic Route
-app.get('/', (req, res) => {
-  res.send('Hello from the Node.js API (Running on AKS + PostgreSQL)!');
+app.get("/", (_req, res) => {
+  res.send("Hello from Backend A (Node.js) running on AKS + PostgreSQL!");
 });
 
-// Test DB Route
-app.get('/db-test', async (req, res) => {
+app.get("/db-test", async (_req, res) => {
   try {
-    const result = await client.query('SELECT NOW()');
-    res.json({ message: 'Database Connected!', time: result.rows[0].now });
+    const r = await pool.query("SELECT NOW()");
+    res.json({ service: "api-a", message: "Database Connected!", time: r.rows[0].now });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ service: "api-a", error: err.message });
   }
 });
 
-app.listen(port, () => {
-  console.log(`App listening on port ${port}`);
-});
+app.listen(port, () => console.log(`api-a listening on port ${port}`));
