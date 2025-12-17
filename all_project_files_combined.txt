@@ -1,0 +1,1178 @@
+------------------START OF FILE: terraform-main.yml------------------
+FILE: C:\Users\Gopal Walia\Documents\gopal-terraform-demo\.github\terraform-main.yml
+
+name: "Infrastructure (Terraform)"
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    env:
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Plan
+        run: terraform plan -out=tfplan
+
+      - name: Terraform Apply
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: terraform apply -auto-approve tfplan
+
+------------------EoF----------
+
+------------------START OF FILE: backend-deploy.yml------------------
+FILE: C:\Users\Gopal Walia\Documents\gopal-terraform-demo\.github\workflows\backend-deploy.yml
+
+name: Deploy Backend (AKS + APIM)
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "api/**"
+      - "api-b/**"
+      - "k8s/**"
+      - ".github/workflows/backend-deploy.yml"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target Environment"
+        required: true
+        default: "dev"
+        type: choice
+        options:
+          - dev
+          - qa
+          - prod
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy-backend:
+    runs-on: ubuntu-latest
+    env:
+      ENV_NAME: ${{ github.event.inputs.environment || 'dev' }}
+
+      TF_STATE_RG: ${{ secrets.TF_STATE_RG }}
+      TF_STATE_STORAGE: ${{ secrets.TF_STATE_STORAGE }}
+      TF_STATE_CONTAINER: ${{ secrets.TF_STATE_CONTAINER }}
+
+      DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+      DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+
+      # DB secret passed to k8s secret (never commit this)
+      DB_PASSWORD: ${{ secrets.TF_VAR_POSTGRES_ADMIN_PASSWORD }}
+      DB_USER: gopaladmin
+      DB_NAME: appdb
+
+      # From AZURE_CREDENTIALS JSON
+      SUBSCRIPTION_ID: ${{ fromJson(secrets.AZURE_CREDENTIALS).subscriptionId }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ env.DOCKER_USERNAME }}
+          password: ${{ env.DOCKER_PASSWORD }}
+
+      - name: Setup Terraform (for outputs)
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_wrapper: false
+
+      - name: Terraform Init (remote state)
+        working-directory: terraform
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${TF_STATE_RG}" \
+            -backend-config="storage_account_name=${TF_STATE_STORAGE}" \
+            -backend-config="container_name=${TF_STATE_CONTAINER}" \
+            -backend-config="key=infra.tfstate"
+
+      - name: Read Terraform outputs
+        working-directory: terraform
+        run: terraform output -json > tfout.json
+
+      - name: Resolve infra names for environment
+        id: names
+        working-directory: terraform
+        run: |
+          RG=$(jq -r --arg env "$ENV_NAME" '.resource_groups.value[$env]' tfout.json)
+          AKS=$(jq -r --arg env "$ENV_NAME" '.aks_clusters.value[$env]' tfout.json)
+          APIM=$(jq -r --arg env "$ENV_NAME" '.apim_names.value[$env]' tfout.json)
+          DB_HOST=$(jq -r --arg env "$ENV_NAME" '.postgres_fqdns.value[$env]' tfout.json)
+
+          echo "RG=$RG" >> $GITHUB_ENV
+          echo "AKS=$AKS" >> $GITHUB_ENV
+          echo "APIM=$APIM" >> $GITHUB_ENV
+          echo "DB_HOST=$DB_HOST" >> $GITHUB_ENV
+
+      - name: Build & Push API A image
+        working-directory: api
+        run: |
+          IMAGE_A="${DOCKER_USERNAME}/gopal-api-a:${ENV_NAME}-${GITHUB_SHA}"
+          docker build -t "$IMAGE_A" .
+          docker push "$IMAGE_A"
+          echo "IMAGE_A=$IMAGE_A" >> $GITHUB_ENV
+
+      - name: Build & Push API B image
+        working-directory: api-b
+        run: |
+          IMAGE_B="${DOCKER_USERNAME}/gopal-api-b:${ENV_NAME}-${GITHUB_SHA}"
+          docker build -t "$IMAGE_B" .
+          docker push "$IMAGE_B"
+          echo "IMAGE_B=$IMAGE_B" >> $GITHUB_ENV
+
+      - name: Get AKS credentials
+        run: |
+          az aks get-credentials \
+            --resource-group "$RG" \
+            --name "$AKS" \
+            --overwrite-existing
+
+      - name: Create namespace
+        run: kubectl apply -f k8s/00-namespace.yaml
+
+      - name: Create/Update DB secret (no plaintext in repo)
+        run: |
+          kubectl -n gopal-app create secret generic db-conn \
+            --from-literal=host="$DB_HOST" \
+            --from-literal=name="$DB_NAME" \
+            --from-literal=user="$DB_USER" \
+            --from-literal=password="$DB_PASSWORD" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Deploy API A + API B manifests
+        run: |
+          sed "s|IMAGE_API_A|$IMAGE_A|g" k8s/api-a.yaml | kubectl apply -f -
+          sed "s|IMAGE_API_B|$IMAGE_B|g" k8s/api-b.yaml | kubectl apply -f -
+
+      - name: Wait for LoadBalancer IPs
+        run: |
+          echo "Waiting for API A LB IP..."
+          for i in {1..60}; do
+            IP_A=$(kubectl -n gopal-app get svc api-a-service -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
+            if [ -n "$IP_A" ]; then break; fi
+            sleep 10
+          done
+          if [ -z "$IP_A" ]; then echo "API A LB IP not assigned"; exit 1; fi
+
+          echo "Waiting for API B LB IP..."
+          for i in {1..60}; do
+            IP_B=$(kubectl -n gopal-app get svc api-b-service -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
+            if [ -n "$IP_B" ]; then break; fi
+            sleep 10
+          done
+          if [ -z "$IP_B" ]; then echo "API B LB IP not assigned"; exit 1; fi
+
+          echo "IP_A=$IP_A" >> $GITHUB_ENV
+          echo "IP_B=$IP_B" >> $GITHUB_ENV
+
+      - name: Configure APIM routes (api-a / api-b) + CORS (via az rest)
+        run: |
+          API_VERSION="2022-08-01"
+          BASE="https://management.azure.com/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/${RG}/providers/Microsoft.ApiManagement/service/${APIM}"
+
+          # Upsert API A
+          az rest --method put \
+            --uri "${BASE}/apis/api-a?api-version=${API_VERSION}" \
+            --headers "Content-Type=application/json" \
+            --body "{\"properties\":{\"displayName\":\"API A\",\"path\":\"api-a\",\"protocols\":[\"https\"],\"serviceUrl\":\"http://${IP_A}\",\"subscriptionRequired\":false}}"
+
+          # Upsert API B
+          az rest --method put \
+            --uri "${BASE}/apis/api-b?api-version=${API_VERSION}" \
+            --headers "Content-Type=application/json" \
+            --body "{\"properties\":{\"displayName\":\"API B\",\"path\":\"api-b\",\"protocols\":[\"https\"],\"serviceUrl\":\"http://${IP_B}\",\"subscriptionRequired\":false}}"
+
+          # CORS policy (allow all) for API A
+          cat > policy.xml << 'EOF'
+          <policies>
+            <inbound>
+              <base />
+              <cors allow-credentials="false">
+                <allowed-origins>
+                  <origin>*</origin>
+                </allowed-origins>
+                <allowed-methods>
+                  <method>GET</method>
+                  <method>POST</method>
+                  <method>PUT</method>
+                  <method>DELETE</method>
+                  <method>OPTIONS</method>
+                </allowed-methods>
+                <allowed-headers>
+                  <header>*</header>
+                </allowed-headers>
+                <expose-headers>
+                  <header>*</header>
+                </expose-headers>
+              </cors>
+            </inbound>
+            <backend><base /></backend>
+            <outbound><base /></outbound>
+            <on-error><base /></on-error>
+          </policies>
+          EOF
+
+          az rest --method put \
+            --uri "${BASE}/apis/api-a/policies/policy?api-version=${API_VERSION}" \
+            --headers "Content-Type=application/vnd.ms-azure-apim.policy+xml" \
+            --body @policy.xml
+
+          az rest --method put \
+            --uri "${BASE}/apis/api-b/policies/policy?api-version=${API_VERSION}" \
+            --headers "Content-Type=application/vnd.ms-azure-apim.policy+xml" \
+            --body @policy.xml
+
+------------------EoF----------
+
+------------------START OF FILE: infra.yml------------------
+FILE: C:\Users\Gopal Walia\Documents\gopal-terraform-demo\.github\workflows\infra.yml
+
+name: Infrastructure (Terraform)
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "terraform/**"
+      - ".github/workflows/infra.yml"
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Deploy target environment"
+        required: true
+        default: "all"
+        type: choice
+        options:
+          - all
+          - dev
+          - qa
+          - prod
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    env:
+      TF_TARGET: ${{ github.event.inputs.target || 'all' }}
+
+      # Terraform state backend (Azure Storage) - GitHub Secrets
+      TF_STATE_RG: ${{ secrets.TF_STATE_RG }}
+      TF_STATE_STORAGE: ${{ secrets.TF_STATE_STORAGE }}
+      TF_STATE_CONTAINER: ${{ secrets.TF_STATE_CONTAINER }}
+
+      # Sensitive TF var (GitHub Secret)
+      TF_VAR_postgres_admin_password: ${{ secrets.TF_VAR_POSTGRES_ADMIN_PASSWORD }}
+
+      # Make auth explicit (same SP as AZURE_CREDENTIALS)
+      ARM_CLIENT_ID: ${{ fromJson(secrets.AZURE_CREDENTIALS).clientId }}
+      ARM_CLIENT_SECRET: ${{ fromJson(secrets.AZURE_CREDENTIALS).clientSecret }}
+      ARM_SUBSCRIPTION_ID: ${{ fromJson(secrets.AZURE_CREDENTIALS).subscriptionId }}
+      ARM_TENANT_ID: ${{ fromJson(secrets.AZURE_CREDENTIALS).tenantId }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Debug identity (safe)
+        run: |
+          echo "ARM_CLIENT_ID=$ARM_CLIENT_ID"
+          az account show -o table
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_wrapper: false
+
+      - name: Validate TF backend vars
+        run: |
+          if [ -z "$TF_STATE_RG" ]; then echo "TF_STATE_RG is empty"; exit 1; fi
+          if [ -z "$TF_STATE_STORAGE" ]; then echo "TF_STATE_STORAGE is empty"; exit 1; fi
+          if [ -z "$TF_STATE_CONTAINER" ]; then echo "TF_STATE_CONTAINER is empty"; exit 1; fi
+          echo "TF_STATE_RG=$TF_STATE_RG"
+          echo "TF_STATE_STORAGE=$TF_STATE_STORAGE"
+          echo "TF_STATE_CONTAINER=$TF_STATE_CONTAINER"
+
+      - name: Test Storage access (must succeed before terraform init)
+        run: |
+          az account set --subscription "$ARM_SUBSCRIPTION_ID"
+          echo "Testing container access with AAD login..."
+          az storage container show \
+            --name "$TF_STATE_CONTAINER" \
+            --account-name "$TF_STATE_STORAGE" \
+            --auth-mode login
+
+          echo "Listing blobs (if empty, that's fine)..."
+          az storage blob list \
+            --container-name "$TF_STATE_CONTAINER" \
+            --account-name "$TF_STATE_STORAGE" \
+            --auth-mode login \
+            --num-results 5 \
+            -o table
+
+      - name: Terraform Init (remote state)
+        working-directory: terraform
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${TF_STATE_RG}" \
+            -backend-config="storage_account_name=${TF_STATE_STORAGE}" \
+            -backend-config="container_name=${TF_STATE_CONTAINER}" \
+            -backend-config="key=infra.tfstate" \
+            -backend-config="use_azuread_auth=true"
+
+      - name: Terraform Plan
+        working-directory: terraform
+        run: |
+          if [ "${TF_TARGET}" = "all" ]; then
+            ENVS='["dev","qa","prod"]'
+          else
+            ENVS='["'${TF_TARGET}'"]'
+          fi
+
+          terraform plan \
+            -var='environments='"${ENVS}" \
+            -out=tfplan
+
+      - name: Terraform Apply
+        working-directory: terraform
+        if: github.ref == 'refs/heads/main'
+        run: terraform apply -auto-approve tfplan
+
+------------------EoF----------
+
+------------------START OF FILE: ui-appservice-deploy.yml------------------
+FILE: C:\Users\Gopal Walia\Documents\gopal-terraform-demo\.github\workflows\ui-appservice-deploy.yml
+
+name: Deploy UI (App Service Container)
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "ui/**"
+      - ".github/workflows/ui-appservice-deploy.yml"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target Environment"
+        required: true
+        default: "dev"
+        type: choice
+        options:
+          - dev
+          - qa
+          - prod
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy-ui:
+    runs-on: ubuntu-latest
+    env:
+      ENV_NAME: ${{ github.event.inputs.environment || 'dev' }}
+
+      TF_STATE_RG: ${{ secrets.TF_STATE_RG }}
+      TF_STATE_STORAGE: ${{ secrets.TF_STATE_STORAGE }}
+      TF_STATE_CONTAINER: ${{ secrets.TF_STATE_CONTAINER }}
+
+      DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+      DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+
+      SUBSCRIPTION_ID: ${{ fromJson(secrets.AZURE_CREDENTIALS).subscriptionId }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Azure Login
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ env.DOCKER_USERNAME }}
+          password: ${{ env.DOCKER_PASSWORD }}
+
+      - name: Setup Terraform (for outputs)
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_wrapper: false
+
+      - name: Terraform Init (remote state)
+        working-directory: terraform
+        run: |
+          terraform init \
+            -backend-config="resource_group_name=${TF_STATE_RG}" \
+            -backend-config="storage_account_name=${TF_STATE_STORAGE}" \
+            -backend-config="container_name=${TF_STATE_CONTAINER}" \
+            -backend-config="key=infra.tfstate"
+
+      - name: Read Terraform outputs
+        working-directory: terraform
+        run: terraform output -json > tfout.json
+
+      - name: Resolve infra names + APIM URL for environment
+        working-directory: terraform
+        run: |
+          RG=$(jq -r --arg env "$ENV_NAME" '.resource_groups.value[$env]' tfout.json)
+          WEBAPP=$(jq -r --arg env "$ENV_NAME" '.ui_webapp_names.value[$env]' tfout.json)
+          APIM_URL=$(jq -r --arg env "$ENV_NAME" '.apim_gateway_urls.value[$env]' tfout.json)
+
+          echo "RG=$RG" >> $GITHUB_ENV
+          echo "WEBAPP=$WEBAPP" >> $GITHUB_ENV
+          echo "APIM_URL=$APIM_URL" >> $GITHUB_ENV
+
+      - name: Build & Push UI image (inject APIM URL)
+        working-directory: ui
+        run: |
+          IMAGE_UI="${DOCKER_USERNAME}/gopal-ui:${ENV_NAME}-${GITHUB_SHA}"
+          docker build \
+            --build-arg REACT_APP_API_BASE_URL="${APIM_URL}" \
+            -t "$IMAGE_UI" .
+          docker push "$IMAGE_UI"
+          echo "IMAGE_UI=$IMAGE_UI" >> $GITHUB_ENV
+
+      - name: Point App Service to UI container image
+        run: |
+          az webapp config container set \
+            --resource-group "$RG" \
+            --name "$WEBAPP" \
+            --docker-custom-image-name "docker.io/$IMAGE_UI" \
+            --docker-registry-server-url "https://index.docker.io"
+
+          az webapp config appsettings set \
+            --resource-group "$RG" \
+            --name "$WEBAPP" \
+            --settings WEBSITES_PORT=80
+
+          az webapp restart --resource-group "$RG" --name "$WEBAPP"
+
+------------------EoF----------
+
+------------------START OF FILE: Dockerfile------------------
+FILE: C:\Users\Gopal Walia\Documents\gopal-terraform-demo\api\Dockerfile
+
+FROM node:18-alpine
+WORKDIR /usr/src/app
+COPY package*.json ./
+RUN npm install --production
+COPY . .
+EXPOSE 80
+CMD ["node", "index.js"]
+
+------------------EoF----------
+
+------------------START OF FILE: index.js------------------
+FILE: C:\Users\Gopal Walia\Documents\gopal-terraform-demo\api\index.js
+
+const express = require("express");
+const { Pool } = require("pg");
+
+const app = express();
+const port = 80;
+
+const pool = new Pool({
+  user: process.env.DB_USER || "gopaladmin",
+  host: process.env.DB_HOST,
+  database: process.env.DB_NAME || "appdb",
+  password: process.env.DB_PASSWORD,
+  port: 5432,
+  ssl: { rejectUnauthorized: false }
+});
+
+app.get("/health", (_req, res) => res.json({ service: "api-a", status: "ok" }));
+
+app.get("/", (_req, res) => {
+  res.send("Hello from Backend A (Node.js) running on AKS + PostgreSQL!");
+});
+
+app.get("/db-test", async (_req, res) => {
+  try {
+    const r = await pool.query("SELECT NOW()");
+    res.json({ service: "api-a", message: "Database Connected!", time: r.rows[0].now });
+  } catch (err) {
+    res.status(500).json({ service: "api-a", error: err.message });
+  }
+});
+
+app.listen(port, () => console.log(`api-a listening on port ${port}`));
+
+------------------EoF----------
+
+------------------START OF FILE: package.json------------------
+FILE: C:\Users\Gopal Walia\Documents\gopal-terraform-demo\api\package.json
+
+{
+  "name": "my-api-service",
+  "version": "1.0.0",
+  "description": "Node.js API with PostgreSQL",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "pg": "^8.11.0",
+    "dotenv": "^16.0.3"
+  }
+}
+
+------------------EoF----------
+
+------------------START OF FILE: 00-namespace.yaml------------------
+FILE: C:\Users\Gopal Walia\Documents\gopal-terraform-demo\k8s\00-namespace.yaml
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gopal-app
+
+------------------EoF----------
+
+------------------START OF FILE: api-a.yaml------------------
+FILE: C:\Users\Gopal Walia\Documents\gopal-terraform-demo\k8s\api-a.yaml
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-a
+  namespace: gopal-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api-a
+  template:
+    metadata:
+      labels:
+        app: api-a
+    spec:
+      containers:
+        - name: api-a
+          image: IMAGE_API_A
+          ports:
+            - containerPort: 80
+          env:
+            - name: DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: db-conn
+                  key: host
+            - name: DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: db-conn
+                  key: name
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: db-conn
+                  key: user
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-conn
+                  key: password
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 80
+            initialDelaySeconds: 15
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-a-service
+  namespace: gopal-app
+spec:
+  type: LoadBalancer
+  selector:
+    app: api-a
+  ports:
+    - port: 80
+      targetPort: 80
+
+------------------EoF----------
+
+------------------START OF FILE: api-b.yaml------------------
+FILE: C:\Users\Gopal Walia\Documents\gopal-terraform-demo\k8s\api-b.yaml
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-b
+  namespace: gopal-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api-b
+  template:
+    metadata:
+      labels:
+        app: api-b
+    spec:
+      containers:
+        - name: api-b
+          image: IMAGE_API_B
+          ports:
+            - containerPort: 80
+          env:
+            - name: DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: db-conn
+                  key: host
+            - name: DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: db-conn
+                  key: name
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: db-conn
+                  key: user
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-conn
+                  key: password
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 80
+            initialDelaySeconds: 15
+            periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-b-service
+  namespace: gopal-app
+spec:
+  type: LoadBalancer
+  selector:
+    app: api-b
+  ports:
+    - port: 80
+      targetPort: 80
+
+------------------EoF----------
+
+------------------START OF FILE: apim.tf------------------
+FILE: C:\Users\Gopal Walia\Documents\gopal-terraform-demo\terraform\apim.tf
+
+resource "azurerm_api_management" "apim" {
+  for_each = var.environments
+
+  # needs global uniqueness -> suffix
+  name                = "${var.prefix}-${each.key}-apim-${random_string.suffix[each.key].result}"
+  location            = azurerm_resource_group.rg[each.key].location
+  resource_group_name = azurerm_resource_group.rg[each.key].name
+
+  publisher_name  = var.apim_publisher_name
+  publisher_email = var.apim_publisher_email
+
+  # cheaper tier
+  sku_name = var.apim_sku_name
+
+  tags = merge(var.tags, { env = each.key })
+}
+
+------------------EoF----------
+
+------------------START OF FILE: app_service.tf------------------
+FILE: C:\Users\Gopal Walia\Documents\gopal-terraform-demo\terraform\app_service.tf
+
+resource "azurerm_service_plan" "ui_plan" {
+  for_each = var.environments
+
+  name                = "${var.prefix}-${each.key}-ui-plan"
+  resource_group_name = azurerm_resource_group.rg[each.key].name
+  location            = azurerm_resource_group.rg[each.key].location
+  os_type             = "Linux"
+  sku_name            = var.ui_plan_sku_name
+
+  tags = merge(var.tags, { env = each.key })
+}
+
+resource "azurerm_linux_web_app" "ui_app" {
+  for_each = var.environments
+
+  # needs global uniqueness -> suffix
+  name                = "${var.prefix}-${each.key}-ui-${random_string.suffix[each.key].result}"
+  resource_group_name = azurerm_resource_group.rg[each.key].name
+  location            = azurerm_resource_group.rg[each.key].location
+  service_plan_id     = azurerm_service_plan.ui_plan[each.key].id
+
+  site_config {
+    always_on = false
+
+    application_stack {
+      node_version = "18-lts"
+    }
+  }
+
+  # UI pipeline sets container image; prevent terraform drift fights
+  lifecycle {
+    ignore_changes = [
+      site_config,
+      app_settings
+    ]
+  }
+
+  tags = merge(var.tags, { env = each.key })
+}
+
+------------------EoF----------
+
+------------------START OF FILE: backend.tf------------------
+FILE: C:\Users\Gopal Walia\Documents\gopal-terraform-demo\terraform\backend.tf
+
+terraform {
+  backend "azurerm" {}
+}
+
+------------------EoF----------
+
+------------------START OF FILE: database.tf------------------
+FILE: C:\Users\Gopal Walia\Documents\gopal-terraform-demo\terraform\database.tf
+
+resource "azurerm_postgresql_flexible_server" "postgres" {
+  for_each = var.environments
+
+  # needs global uniqueness -> suffix
+  name                = "${var.prefix}-${each.key}-psql-${random_string.suffix[each.key].result}"
+  resource_group_name = azurerm_resource_group.rg[each.key].name
+  location            = azurerm_resource_group.rg[each.key].location
+
+  version                = "13"
+  administrator_login    = var.postgres_admin_user
+  administrator_password = var.postgres_admin_password
+
+  sku_name   = "B_Standard_B1ms"
+  storage_mb = 32768
+
+  tags = merge(var.tags, { env = each.key })
+}
+
+resource "azurerm_postgresql_flexible_server_database" "db" {
+  for_each = var.environments
+
+  name      = "appdb"
+  server_id = azurerm_postgresql_flexible_server.postgres[each.key].id
+  collation = "en_US.utf8"
+  charset   = "utf8"
+}
+
+# Demo-friendly (keeps it simple for class): open public firewall.
+resource "azurerm_postgresql_flexible_server_firewall_rule" "allow_all" {
+  for_each = var.environments
+
+  name             = "allow-all"
+  server_id        = azurerm_postgresql_flexible_server.postgres[each.key].id
+  start_ip_address = "0.0.0.0"
+  end_ip_address   = "255.255.255.255"
+}
+
+------------------EoF----------
+
+------------------START OF FILE: main.tf------------------
+FILE: C:\Users\Gopal Walia\Documents\gopal-terraform-demo\terraform\main.tf
+
+# 1. Create Three Resource Groups
+resource "azurerm_resource_group" "rg" {
+  for_each = var.environments
+
+  name     = "${var.prefix}-${each.key}-resources"
+  location = var.location
+}
+
+# 2. Create Three AKS Clusters
+resource "azurerm_kubernetes_cluster" "aks" {
+  for_each = var.environments
+
+  name                = "${var.prefix}-${each.key}-aks"
+  location            = azurerm_resource_group.rg[each.key].location
+  resource_group_name = azurerm_resource_group.rg[each.key].name
+  dns_prefix          = "${lower(var.prefix)}-${each.key}-aks"
+
+  default_node_pool {
+    name       = "default"
+    node_count = var.aks_node_count
+
+    # IMPORTANT:
+    # Your error is "Insufficient vcpu quota ... for family standardBSFamily (B-series) in westus2".
+    # So do NOT use Standard_B2s. Use a different family (e.g., DSv2/Dsv3) that typically has quota.
+    vm_size = var.aks_vm_size
+
+    # Avoid extra "surge" nodes during upgrades (helps with tight quotas)
+    upgrade_settings {
+      max_surge = "0%"
+    }
+  }
+
+  identity {
+    type = "SystemAssigned"
+  }
+}
+
+------------------EoF----------
+
+------------------START OF FILE: outputs.tf------------------
+FILE: C:\Users\Gopal Walia\Documents\gopal-terraform-demo\terraform\outputs.tf
+
+output "resource_groups" {
+  value = { for k, v in azurerm_resource_group.rg : k => v.name }
+}
+
+output "aks_clusters" {
+  value = { for k, v in azurerm_kubernetes_cluster.aks : k => v.name }
+}
+
+output "postgres_fqdns" {
+  value = { for k, v in azurerm_postgresql_flexible_server.postgres : k => v.fqdn }
+}
+
+output "apim_names" {
+  value = { for k, v in azurerm_api_management.apim : k => v.name }
+}
+
+output "apim_gateway_urls" {
+  value = { for k, v in azurerm_api_management.apim : k => v.gateway_url }
+}
+
+output "ui_webapp_names" {
+  value = { for k, v in azurerm_linux_web_app.ui_app : k => v.name }
+}
+
+output "ui_urls" {
+  value = { for k, v in azurerm_linux_web_app.ui_app : k => "https://${v.default_hostname}" }
+}
+
+------------------EoF----------
+
+------------------START OF FILE: providers.tf------------------
+FILE: C:\Users\Gopal Walia\Documents\gopal-terraform-demo\terraform\providers.tf
+
+terraform {
+  required_version = ">= 1.5.0"
+
+  required_providers {
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = "~> 3.0"
+    }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.6"
+    }
+  }
+}
+
+provider "azurerm" {
+  features {}
+}
+
+provider "random" {}
+
+------------------EoF----------
+
+------------------START OF FILE: variables.tf------------------
+FILE: C:\Users\Gopal Walia\Documents\gopal-terraform-demo\terraform\variables.tf
+
+variable "prefix" {
+  description = "Prefix for resources (naming convention)."
+  type        = string
+  default     = "gopalcloud"
+}
+
+variable "location" {
+  description = "Azure region."
+  type        = string
+  default     = "West US 2"
+}
+
+variable "environments" {
+  description = "Environments to deploy."
+  type        = set(string)
+  default     = ["dev", "qa", "prod"]
+}
+
+variable "tags" {
+  description = "Common tags."
+  type        = map(string)
+  default = {
+    project = "gopal-capstone"
+  }
+}
+
+variable "postgres_admin_user" {
+  description = "PostgreSQL admin user."
+  type        = string
+  default     = "gopaladmin"
+}
+
+variable "postgres_admin_password" {
+  description = "PostgreSQL admin password."
+  type        = string
+  sensitive   = true
+}
+
+variable "apim_sku_name" {
+  description = "APIM SKU (cheaper: Consumption_0)."
+  type        = string
+  default     = "Consumption_0"
+}
+
+variable "apim_publisher_name" {
+  description = "APIM publisher name."
+  type        = string
+  default     = "Gopal Corp"
+}
+
+variable "apim_publisher_email" {
+  description = "APIM publisher email."
+  type        = string
+  default     = "gopal@example.com"
+}
+
+variable "ui_plan_sku_name" {
+  description = "App Service plan SKU (cheap & reliable: B1)."
+  type        = string
+  default     = "B1"
+}
+
+------------------EoF----------
+
+------------------START OF FILE: Dockerfile------------------
+FILE: C:\Users\Gopal Walia\Documents\gopal-terraform-demo\ui\Dockerfile
+
+# Build Stage
+FROM node:18-alpine as build
+WORKDIR /app
+
+ARG REACT_APP_API_BASE_URL
+ENV REACT_APP_API_BASE_URL=${REACT_APP_API_BASE_URL}
+
+COPY package*.json ./
+RUN npm install
+COPY . .
+RUN npm run build
+
+# Serve Stage
+FROM nginx:alpine
+COPY --from=build /app/build /usr/share/nginx/html
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]
+
+------------------EoF----------
+
+------------------START OF FILE: package.json------------------
+FILE: C:\Users\Gopal Walia\Documents\gopal-terraform-demo\ui\package.json
+
+{
+  "name": "my-frontend-ui",
+  "version": "0.1.0",
+  "private": true,
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-scripts": "5.0.1",
+    "web-vitals": "^2.1.4"
+  },
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "react-scripts build",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject"
+  },
+  "eslintConfig": {
+    "extends": [
+      "react-app",
+      "react-app/jest"
+    ]
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  }
+}
+
+------------------EoF----------
+
+------------------START OF FILE: index.html------------------
+FILE: C:\Users\Gopal Walia\Documents\gopal-terraform-demo\ui\public\index.html
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#000000" />
+    <meta name="description" content="Web site created using create-react-app" />
+    <title>Gopal Cloud App</title>
+  </head>
+  <body>
+    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <div id="root"></div>
+  </body>
+</html>
+
+------------------EoF----------
+
+------------------START OF FILE: App.js------------------
+FILE: C:\Users\Gopal Walia\Documents\gopal-terraform-demo\ui\src\App.js
+
+import React, { useEffect, useState } from "react";
+
+function safeJoin(base, path) {
+  if (!base) return path;
+  return base.replace(/\/+$/, "") + "/" + path.replace(/^\/+/, "");
+}
+
+function App() {
+  const baseUrl = process.env.REACT_APP_API_BASE_URL || "";
+  const [a, setA] = useState(null);
+  const [b, setB] = useState(null);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    async function run() {
+      setErr("");
+      try {
+        const ra = await fetch(safeJoin(baseUrl, "/api-a/db-test"));
+        const ja = await ra.json();
+        setA(ja);
+      } catch (e) {
+        setErr((p) => p + `API A failed: ${e.message}\n`);
+      }
+
+      try {
+        const rb = await fetch(safeJoin(baseUrl, "/api-b/scores"));
+        const jb = await rb.json();
+        setB(jb);
+      } catch (e) {
+        setErr((p) => p + `API B failed: ${e.message}\n`);
+      }
+    }
+
+    if (baseUrl) run();
+  }, [baseUrl]);
+
+  return (
+    <div style={{ fontFamily: "Arial", padding: 24 }}>
+      <h1>Gopal’s Capstone UI (App Service)</h1>
+
+      <p>
+        <strong>APIM Base URL:</strong>{" "}
+        {baseUrl ? <code>{baseUrl}</code> : <span style={{ color: "crimson" }}>NOT SET</span>}
+      </p>
+
+      {err ? (
+        <pre style={{ background: "#fff3f3", padding: 12, borderRadius: 8 }}>{err}</pre>
+      ) : null}
+
+      <div style={{ display: "grid", gap: 16, gridTemplateColumns: "1fr 1fr" }}>
+        <div style={{ border: "1px solid #ddd", borderRadius: 10, padding: 16 }}>
+          <h3>Backend A (API A)</h3>
+          <p>Calls: <code>/api-a/db-test</code></p>
+          <pre style={{ background: "#f6f6f6", padding: 12, borderRadius: 8 }}>
+            {a ? JSON.stringify(a, null, 2) : "Loading..."}
+          </pre>
+        </div>
+
+        <div style={{ border: "1px solid #ddd", borderRadius: 10, padding: 16 }}>
+          <h3>Backend B (API B)</h3>
+          <p>Calls: <code>/api-b/scores</code></p>
+          <pre style={{ background: "#f6f6f6", padding: 12, borderRadius: 8 }}>
+            {b ? JSON.stringify(b, null, 2) : "Loading..."}
+          </pre>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default App;
+
+------------------EoF----------
+
+------------------START OF FILE: index.js------------------
+FILE: C:\Users\Gopal Walia\Documents\gopal-terraform-demo\ui\src\index.js
+
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import App from './App';
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+);
+
+------------------EoF----------
+

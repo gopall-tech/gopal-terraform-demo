@@ -35,6 +35,7 @@ jobs:
       TF_STATE_CONTAINER: ${{ secrets.TF_STATE_CONTAINER }}
 
       # Sensitive TF var (GitHub Secret)
+      # Mapped to TF_VAR_postgres_admin_password so Terraform picks it up as var.postgres_admin_password
       TF_VAR_postgres_admin_password: ${{ secrets.TF_VAR_POSTGRES_ADMIN_PASSWORD }}
 
       # Make auth explicit (same SP as AZURE_CREDENTIALS)
@@ -62,14 +63,22 @@ jobs:
         with:
           terraform_wrapper: false
 
-      - name: Validate TF backend vars
+      - name: Validate TF backend vars and Secrets
         run: |
           if [ -z "$TF_STATE_RG" ]; then echo "TF_STATE_RG is empty"; exit 1; fi
           if [ -z "$TF_STATE_STORAGE" ]; then echo "TF_STATE_STORAGE is empty"; exit 1; fi
           if [ -z "$TF_STATE_CONTAINER" ]; then echo "TF_STATE_CONTAINER is empty"; exit 1; fi
+          
+          # Added check for the password secret
+          if [ -z "$TF_VAR_postgres_admin_password" ]; then 
+            echo "ERROR: TF_VAR_postgres_admin_password is empty. Please check your GitHub Secrets."
+            exit 1
+          fi
+
           echo "TF_STATE_RG=$TF_STATE_RG"
           echo "TF_STATE_STORAGE=$TF_STATE_STORAGE"
           echo "TF_STATE_CONTAINER=$TF_STATE_CONTAINER"
+          echo "Password variable is set (masked)."
 
       - name: Test Storage access (must succeed before terraform init)
         run: |
